@@ -4,7 +4,7 @@ import cv2
 import argparse
 import time
 
-def run_receiver_lib(size, start_universe):
+def run_receiver_lib(size, start_universe, port):
     # 1. Hitung Buffer
     total_pixels = size * size
     total_channels = total_pixels * 3 # RGB
@@ -17,20 +17,17 @@ def run_receiver_lib(size, start_universe):
     total_universes_needed = int(total_channels / channels_per_universe) + 1
     
     print(f"[*] Starting sACN Receiver (Library Mode)")
+    print(f"[*] Port: {port}")
     print(f"[*] Matrix: {size}x{size} | Total Universes: {total_universes_needed}")
     print(f"[*] Listening Universe range: {start_universe} -> {start_universe + total_universes_needed - 1}")
 
-    # 2. Inisialisasi Receiver
-    # bind_address="0.0.0.0" berarti mendengarkan di semua network card
-    receiver = sacn.sACNreceiver(bind_address="0.0.0.0")
+    # 2. Inisialisasi Receiver dengan Custom Port
+    # bind_port ditambahkan di sini untuk mengganti default 5568
+    receiver = sacn.sACNreceiver(bind_address="0.0.0.0", bind_port=port)
     receiver.start()
 
     # 3. Definisi Fungsi Callback
-    # Fungsi ini akan dipanggil OTOMATIS oleh library setiap kali ada data masuk
     def packet_callback(packet):
-        # packet.universe = ID universe yang mengirim data ini
-        # packet.dmxData  = Data tuple (r, g, b, ...)
-        
         # Hitung posisi data ini harus ditaruh di buffer mana
         uni_offset = packet.universe - start_universe
         
@@ -44,53 +41,43 @@ def run_receiver_lib(size, start_universe):
                 # Salin data ke buffer utama
                 frame_buffer[buffer_index : buffer_index + data_len] = data
 
-    # 4. Daftarkan Callback ke Universe yang relevan
+    # 4. Daftarkan Callback
     for i in range(total_universes_needed):
         univ_id = start_universe + i
-        # Kita minta library: "Tolong panggil packet_callback kalau ada data di univ_id ini"
         receiver.register_listener("universe", packet_callback, universe=univ_id)
-        # Gabung ke Multicast group (opsional jika pakai Unicast, tapi aman dinyalakan)
+        # Gabung multicast (opsional, tapi aman dinyalakan)
         receiver.join_multicast(univ_id)
 
     print("[*] Receiver running... Press 'q' to exit.")
     
-    window_name = "sACN Receiver Simulation"
+    window_name = f"sACN Receiver (Port {port})"
     cv2.namedWindow(window_name, cv2.WINDOW_AUTOSIZE)
 
     try:
         while True:
-            # 5. Loop Display (Main Thread)
-            # Tugas main thread hanya menampilkan apa yang ada di buffer saat ini
-            
-            # Reshape Buffer 1D -> Gambar 2D
+            # 5. Loop Display
             frame_2d = frame_buffer.reshape((size, size, 3))
-            
-            # Konversi RGB (E1.31) ke BGR (OpenCV)
             frame_bgr = cv2.cvtColor(frame_2d, cv2.COLOR_RGB2BGR)
-            
-            # Tampilkan
             cv2.imshow(window_name, frame_bgr)
             
-            # Cek tombol keluar
             if cv2.waitKey(1) & 0xFF == ord('q'):
                 break
             
-            # Sleep ringan agar CPU tidak 100%
             time.sleep(0.01)
             
     except KeyboardInterrupt:
         print("\n[*] Stopping...")
     finally:
-        # Bersihkan resource
         receiver.stop()
         cv2.destroyAllWindows()
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    # Port tidak perlu diset karena library sacn otomatis pakai 5568
+    # Menambahkan argumen Port
+    parser.add_argument("--port", default=5568, type=int, help="Custom UDP Port (default: 5568)")
     parser.add_argument("--size", default=64, type=int, help="Matrix Size (default: 64)")
     parser.add_argument("--universe", default=1, type=int, help="Start Universe ID (default: 1)")
     
     args = parser.parse_args()
     
-    run_receiver_lib(args.size, args.universe)
+    run_receiver_lib(args.size, args.universe, args.port)

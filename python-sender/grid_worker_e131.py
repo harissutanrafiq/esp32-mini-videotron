@@ -5,7 +5,7 @@ import argparse
 import time
 import sacn  # Pastikan sudah pip install sacn
 
-def run_worker(ip, top, left, width, height, target_size=64, start_universe=1):
+def run_worker(ip, top, left, width, height, target_size=64, start_universe=1,port=5568):
     print(f"[*] Worker E1.31 (Library Mode) Started")
     print(f"[*] Target IP: {ip} (Port Default: 5568)")
     print(f"[*] ROI: {width}x{height} -> Grid: {target_size}x{target_size}")
@@ -32,7 +32,7 @@ def run_worker(ip, top, left, width, height, target_size=64, start_universe=1):
         # Port otomatis 5568. Kita hanya set IP (Unicast).
         sender[univ_id].destination = ip 
         sender[univ_id].multicast = False 
-        sender[i+1].destinationPort = 5568 
+        sender[i+1].destinationPort = port 
         
         active_universes.append(univ_id)
         
@@ -88,4 +88,4 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    run_worker(args.ip, args.top, args.left, args.width, args.height, args.size, args.universe)
+    run_worker(args.ip, args.top, args.left, args.width, args.height, args.size, args.universe,args.port)
