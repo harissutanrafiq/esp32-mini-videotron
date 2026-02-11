@@ -120,15 +120,17 @@ class GridStreamerApp:
             self.grid_vars.append({"ip": ip_v, "port": port_v, "active": btn_active, "btn": btn})
 
     def toggle_worker_script(self, idx):
-        """Menjalankan script worker dengan IP dan Port sesuai input."""
-        if not self.is_running_global:
-            messagebox.showwarning("Warning", "Aktifkan 'Start Preview' terlebih dahulu!")
-            return
-
-        cfg = self.grid_vars[idx]
+        """Menjalankan atau Mematikan script worker."""
         
-        if not cfg["active"].get():
-            # ... (bagian kalkulasi koordinat worker_left dan worker_top tetap sama)
+        # --- LOGIKA TOMBOL ON ---
+        if not self.grid_vars[idx]["active"].get():
+            if not self.is_running_global:
+                messagebox.showwarning("Warning", "Aktifkan 'Start Preview' terlebih dahulu!")
+                return
+
+            cfg = self.grid_vars[idx]
+            
+            # 1. Hitung Koordinat (Sama seperti sebelumnya)
             gh, gv = self.grid_h.get(), self.grid_v.get()
             hx, vx = idx % gh, idx // gh
             rx, ry, rw, rh = self.roi
@@ -138,40 +140,63 @@ class GridStreamerApp:
             worker_left = self.current_target_win.left + rx + (hx * worker_w)
             worker_top = self.current_target_win.top + ry + (vx * worker_h)
 
+            # 2. Siapkan Command
             current_dir = os.path.dirname(os.path.abspath(__file__))
             worker_path = os.path.join(current_dir, "grid_worker_e131.py")
             python_exe = sys.executable
 
-            # TAMBAHKAN ARGUMEN PORT DI SINI
             cmd = [
                 python_exe, worker_path,
                 "--ip", cfg["ip"].get(),
-                "--port", cfg["port"].get(),  # Mengambil nilai dari Entry Port
+                "--port", cfg["port"].get(),
                 "--top", str(int(worker_top)),
                 "--left", str(int(worker_left)),
                 "--width", str(int(worker_w)),
                 "--height", str(int(worker_h)),
                 "--size", str(self.GRID_PIXELS),
-                "--universe","1"
+                "--universe", "1" # Logic universe auto bisa ditambahkan nanti
             ]
 
             try:
+                # CREATE_NEW_CONSOLE membuat jendela CMD baru. 
+                # Kita simpan objek process-nya (proc) untuk dimatikan nanti.
                 proc = subprocess.Popen(cmd, creationflags=subprocess.CREATE_NEW_CONSOLE)
                 self.worker_processes[idx] = proc
                 
                 cfg["active"].set(True)
                 cfg["btn"].config(text="ON", bg="#2ecc71", fg="white")
-                print(f"[*] Worker {idx+1} started at {cfg['ip'].get()}:{cfg['port'].get()}")
+                print(f"[*] Worker {idx+1} started -> PID: {proc.pid}")
             except Exception as e:
                 messagebox.showerror("Error", f"Worker {idx+1} Gagal: {e}")
+
+        # --- LOGIKA TOMBOL OFF (PERBAIKAN DI SINI) ---
         else:
-            # ... (bagian matikan proses tetap sama)
+            cfg = self.grid_vars[idx]
+            
             if idx in self.worker_processes:
-                self.worker_processes[idx].terminate()
+                proc = self.worker_processes[idx]
+                try:
+                    # 1. Coba terminate (sopan)
+                    proc.terminate()
+                    
+                    # 2. Tunggu sebentar (0.1 detik) untuk cleanup
+                    try:
+                        proc.wait(timeout=0.1)
+                    except subprocess.TimeoutExpired:
+                        # 3. JIKA MASIH HIDUP, PAKSA BUNUH (FORCE KILL)
+                        # Ini akan langsung menutup jendela console/OpenCV
+                        proc.kill() 
+                        
+                except Exception as e:
+                    print(f"[!] Error killing worker {idx+1}: {e}")
+                
+                # Hapus dari dictionary
                 del self.worker_processes[idx]
             
+            # Reset UI Tombol
             cfg["active"].set(False)
             cfg["btn"].config(text="OFF", bg="#f0f0f0", fg="black")
+            print(f"[-] Worker {idx+1} Stopped & Window Closed.")
 
     def stop_all_streams(self):
         self.is_running_global = False
