@@ -14,7 +14,7 @@ from PIL import Image, ImageTk
 class GridStreamerApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("Matrix Master Controller - Multi-Process Mode")
+        self.root.title("Matrix Master Controller - Auto Width Layout")
         self.root.geometry("1400x850")
 
         # --- STATE ---
@@ -23,8 +23,8 @@ class GridStreamerApp:
         self.grid_v = tk.IntVar(value=2)
         self.GRID_PIXELS = 64
         
-        # Dictionary untuk menampung banyak proses sekaligus
         self.worker_processes = {} 
+        self.receiver_processes = {}
         
         self.roi = [20, 20, 150, 150] 
         self.drag_mode = None
@@ -53,28 +53,38 @@ class GridStreamerApp:
         self.main_body = tk.Frame(self.root)
         self.main_body.pack(fill="both", expand=True)
 
-        # PANEL KIRI: CONFIG (SCROLLABLE)
-        self.left_panel = tk.Frame(self.main_body, width=320)
+        # PANEL KIRI: CONFIG
+        # UBAH DISINI: Tidak pakai width fix, tidak pakai pack_propagate(False)
+        # Agar lebar panel otomatis mengikuti konten di dalamnya (Fit Content)
+        self.left_panel = tk.Frame(self.main_body) 
         self.left_panel.pack(side="left", fill="y", padx=5)
-        self.left_panel.pack_propagate(False)
-
+        
         grid_set = tk.LabelFrame(self.left_panel, text=" Layout Settings ", pady=10)
         grid_set.pack(fill="x", side="top", pady=(0, 5))
         tk.Spinbox(grid_set, from_=1, to=10, textvariable=self.grid_h, width=3, command=self.on_layout_change).pack(side="left", padx=5)
+        tk.Label(grid_set, text="x").pack(side="left")
         tk.Spinbox(grid_set, from_=1, to=10, textvariable=self.grid_v, width=3, command=self.on_layout_change).pack(side="left", padx=5)
 
         self.list_container = tk.Frame(self.left_panel)
         self.list_container.pack(fill="both", expand=True)
-        self.canvas = tk.Canvas(self.list_container, highlightthickness=0)
+        
+        # Canvas butuh width awal agar tidak terlalu kecil saat start, tapi nanti akan membesar
+        self.canvas = tk.Canvas(self.list_container, highlightthickness=0, width=480)
         self.scrollbar = ttk.Scrollbar(self.list_container, orient="vertical", command=self.canvas.yview)
+        
         self.scrollable_frame = tk.Frame(self.canvas)
         self.canvas.configure(yscrollcommand=self.scrollbar.set)
+        
         self.scrollbar.pack(side="right", fill="y")
         self.canvas.pack(side="left", fill="both", expand=True)
+        
         self.canvas_window = self.canvas.create_window((0, 0), window=self.scrollable_frame, anchor="nw")
         
-        self.scrollable_frame.bind("<Configure>", lambda e: self.canvas.configure(scrollregion=self.canvas.bbox("all")))
-        self.canvas.bind("<Configure>", lambda e: self.canvas.itemconfig(self.canvas_window, width=e.width))
+        # Update scrollregion saat isi berubah
+        self.scrollable_frame.bind("<Configure>", self.on_frame_configure)
+        # Update lebar window canvas saat canvas berubah
+        self.canvas.bind("<Configure>", self.on_canvas_configure)
+        
         self.canvas.bind_all("<MouseWheel>", lambda e: self.canvas.yview_scroll(int(-1*(e.delta/120)), "units"))
 
         # PREVIEW PANELS
@@ -93,44 +103,75 @@ class GridStreamerApp:
 
         self.render_grid_inputs()
 
+    def on_frame_configure(self, event):
+        """Update scrollregion agar scrollbar bekerja"""
+        self.canvas.configure(scrollregion=self.canvas.bbox("all"))
+        # Update lebar canvas agar pas dengan lebar frame isinya
+        self.canvas.config(width=event.width)
+
+    def on_canvas_configure(self, event):
+        """Agar frame di dalam canvas melebar mengikuti canvas"""
+        self.canvas.itemconfig(self.canvas_window, width=event.width)
+
     def render_grid_inputs(self):
         for widget in self.scrollable_frame.winfo_children(): widget.destroy()
         self.grid_vars = []
+        
         for i in range(self.grid_h.get() * self.grid_v.get()):
+            # Frame per baris
             row = tk.Frame(self.scrollable_frame, pady=3, padx=2, bd=1, relief="groove")
             row.pack(fill="x", pady=1)
             
-            tk.Label(row, text=f"P{i+1}:", width=3, font=("Arial", 8, "bold")).pack(side="left")
+            # P1
+            tk.Label(row, text=f"P{i+1}", width=3, font=("Arial", 8, "bold")).pack(side="left")
             
-            # Input IP
+            # IP (Lebar 15)
             ip_v = tk.StringVar(value=f"192.168.1.{101+i}")
-            tk.Entry(row, textvariable=ip_v, width=12).pack(side="left", padx=2)
+            tk.Entry(row, textvariable=ip_v, width=15).pack(side="left", padx=1)
             
-            # Input PORT (Baru)
-            tk.Label(row, text=":", font=("Arial", 8, "bold")).pack(side="left")
+            # Port
+            tk.Label(row, text=":").pack(side="left")
             port_v = tk.StringVar(value="5568")
-            tk.Entry(row, textvariable=port_v, width=5).pack(side="left", padx=2)
+            tk.Entry(row, textvariable=port_v, width=5).pack(side="left", padx=1)
             
+            # Univ (Readonly, Fixed 1)
+            tk.Label(row, text="U:", font=("Arial", 8)).pack(side="left", padx=(2,0))
+            univ_v = tk.StringVar(value="1") 
+            tk.Entry(row, textvariable=univ_v, width=3, state="readonly").pack(side="left", padx=1)
+            
+            # Tombol SEND
             btn_active = tk.BooleanVar(value=False)
-            btn = tk.Button(row, text="OFF", width=5, font=("Arial", 7), 
+            btn = tk.Button(row, text="SEND", width=6, font=("Arial", 7, "bold"), 
                            command=lambda idx=i: self.toggle_worker_script(idx))
-            btn.pack(side="right", padx=2)
-            
-            # Simpan port_v ke dalam dictionary
-            self.grid_vars.append({"ip": ip_v, "port": port_v, "active": btn_active, "btn": btn})
+            btn.pack(side="right", padx=1)
 
+            # Tombol TEST RX
+            btn_rx_active = tk.BooleanVar(value=False)
+            btn_rx = tk.Button(row, text="TEST RECEIVER", width=14, font=("Arial", 7, "bold"), bg="#9b59b6", fg="white",
+                           command=lambda idx=i: self.toggle_receiver_script(idx))
+            btn_rx.pack(side="right", padx=1)
+            
+            self.grid_vars.append({
+                "ip": ip_v, 
+                "port": port_v, 
+                "univ": univ_v, 
+                "active": btn_active, 
+                "btn": btn,
+                "rx_active": btn_rx_active,
+                "btn_rx": btn_rx
+            })
+
+    # ==========================
+    # LOGIC SEND (WORKER)
+    # ==========================
     def toggle_worker_script(self, idx):
-        """Menjalankan atau Mematikan script worker."""
-        
-        # --- LOGIKA TOMBOL ON ---
         if not self.grid_vars[idx]["active"].get():
+            # START
             if not self.is_running_global:
                 messagebox.showwarning("Warning", "Aktifkan 'Start Preview' terlebih dahulu!")
                 return
 
             cfg = self.grid_vars[idx]
-            
-            # 1. Hitung Koordinat (Sama seperti sebelumnya)
             gh, gv = self.grid_h.get(), self.grid_v.get()
             hx, vx = idx % gh, idx // gh
             rx, ry, rw, rh = self.roi
@@ -140,7 +181,6 @@ class GridStreamerApp:
             worker_left = self.current_target_win.left + rx + (hx * worker_w)
             worker_top = self.current_target_win.top + ry + (vx * worker_h)
 
-            # 2. Siapkan Command
             current_dir = os.path.dirname(os.path.abspath(__file__))
             worker_path = os.path.join(current_dir, "grid_worker_e131.py")
             python_exe = sys.executable
@@ -149,72 +189,93 @@ class GridStreamerApp:
                 python_exe, worker_path,
                 "--ip", cfg["ip"].get(),
                 "--port", cfg["port"].get(),
+                "--universe", cfg["univ"].get(), # Selalu "1"
                 "--top", str(int(worker_top)),
                 "--left", str(int(worker_left)),
                 "--width", str(int(worker_w)),
                 "--height", str(int(worker_h)),
-                "--size", str(self.GRID_PIXELS),
-                "--universe", "1" # Logic universe auto bisa ditambahkan nanti
+                "--size", str(self.GRID_PIXELS)
             ]
 
             try:
-                # CREATE_NEW_CONSOLE membuat jendela CMD baru. 
-                # Kita simpan objek process-nya (proc) untuk dimatikan nanti.
                 proc = subprocess.Popen(cmd, creationflags=subprocess.CREATE_NEW_CONSOLE)
                 self.worker_processes[idx] = proc
-                
                 cfg["active"].set(True)
-                cfg["btn"].config(text="ON", bg="#2ecc71", fg="white")
-                print(f"[*] Worker {idx+1} started -> PID: {proc.pid}")
+                cfg["btn"].config(text="STOP", bg="#2ecc71", fg="white") 
             except Exception as e:
                 messagebox.showerror("Error", f"Worker {idx+1} Gagal: {e}")
-
-        # --- LOGIKA TOMBOL OFF (PERBAIKAN DI SINI) ---
         else:
+            # STOP
+            self.kill_process(self.worker_processes, idx)
             cfg = self.grid_vars[idx]
-            
-            if idx in self.worker_processes:
-                proc = self.worker_processes[idx]
-                try:
-                    # 1. Coba terminate (sopan)
-                    proc.terminate()
-                    
-                    # 2. Tunggu sebentar (0.1 detik) untuk cleanup
-                    try:
-                        proc.wait(timeout=0.1)
-                    except subprocess.TimeoutExpired:
-                        # 3. JIKA MASIH HIDUP, PAKSA BUNUH (FORCE KILL)
-                        # Ini akan langsung menutup jendela console/OpenCV
-                        proc.kill() 
-                        
-                except Exception as e:
-                    print(f"[!] Error killing worker {idx+1}: {e}")
-                
-                # Hapus dari dictionary
-                del self.worker_processes[idx]
-            
-            # Reset UI Tombol
             cfg["active"].set(False)
-            cfg["btn"].config(text="OFF", bg="#f0f0f0", fg="black")
-            print(f"[-] Worker {idx+1} Stopped & Window Closed.")
+            cfg["btn"].config(text="SEND", bg="#f0f0f0", fg="black")
+
+    # ==========================
+    # LOGIC TEST RECEIVER
+    # ==========================
+    def toggle_receiver_script(self, idx):
+        cfg = self.grid_vars[idx]
+        
+        if not cfg["rx_active"].get():
+            # START
+            current_dir = os.path.dirname(os.path.abspath(__file__))
+            receiver_path = os.path.join(current_dir, "grid_receiver_e131.py")
+            python_exe = sys.executable
+            
+            cmd = [
+                python_exe, receiver_path,
+                "--port", cfg["port"].get(),     
+                "--universe", cfg["univ"].get(), 
+                "--size", str(self.GRID_PIXELS)
+            ]
+            
+            try:
+                proc = subprocess.Popen(cmd, creationflags=subprocess.CREATE_NEW_CONSOLE)
+                self.receiver_processes[idx] = proc
+                
+                cfg["rx_active"].set(True)
+                cfg["btn_rx"].config(text="STOP TEST", bg="#e74c3c", fg="white") 
+                print(f"[*] Receiver {idx+1} Started on Port {cfg['port'].get()}")
+            except Exception as e:
+                messagebox.showerror("Error", f"Receiver {idx+1} Gagal: {e}\nPastikan file 'grid_receiver_sacn_custom.py' ada.")
+        else:
+            # STOP
+            self.kill_process(self.receiver_processes, idx)
+            cfg["rx_active"].set(False)
+            cfg["btn_rx"].config(text="TEST RECEIVER", bg="#9b59b6", fg="white") 
+
+    def kill_process(self, process_dict, idx):
+        if idx in process_dict:
+            proc = process_dict[idx]
+            try:
+                proc.terminate()
+                try:
+                    proc.wait(timeout=0.1)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+            except: pass
+            del process_dict[idx]
 
     def stop_all_streams(self):
         self.is_running_global = False
-        # Matikan SEMUA proses di dictionary
-        for idx in list(self.worker_processes.keys()):
-            try:
-                self.worker_processes[idx].terminate()
-            except: pass
-        self.worker_processes = {}
         
+        for idx in list(self.worker_processes.keys()):
+            self.kill_process(self.worker_processes, idx)
+        for idx in list(self.receiver_processes.keys()):
+            self.kill_process(self.receiver_processes, idx)
+            
         self.source_label.config(image='')
         self.preview_label.config(image='')
         self.btn_main.config(text="START PREVIEW", bg="#27ae60")
+        
         for cfg in self.grid_vars:
             cfg["active"].set(False)
-            cfg["btn"].config(text="OFF", bg="#f0f0f0", fg="black")
+            cfg["btn"].config(text="SEND", bg="#f0f0f0", fg="black")
+            cfg["rx_active"].set(False)
+            cfg["btn_rx"].config(text="TEST RECEIVER", bg="#9b59b6", fg="white")
 
-    # --- SISTEM GUI CAPTURE ---
+    # --- GUI CAPTURE LOOP ---
     def main_loop(self, window_obj):
         self.current_target_win = window_obj
         with mss.mss() as sct:
@@ -288,7 +349,13 @@ class GridStreamerApp:
             rw = max(10, abs(ex - self.ix)); rh = int(rw / (gh/gv))
             self.roi[2], self.roi[3] = rw, rh; self.roi[0] = self.ix if ex > self.ix else self.ix - rw; self.roi[1] = self.iy if ey > self.iy else self.iy - rh
 
-    def on_source_release(self, event): self.drag_mode = None
+    def on_source_release(self, event): 
+        self.drag_mode = None
+        for i, cfg in enumerate(self.grid_vars):
+            if cfg["active"].get():
+                self.toggle_worker_script(i) 
+                self.root.after(200, lambda idx=i: self.toggle_worker_script(idx))
+
     def on_closing(self): self.stop_all_streams(); self.root.destroy()
 
 if __name__ == "__main__":
